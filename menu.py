@@ -137,6 +137,7 @@ class Menu(dict):
                 if self[choice][1] == ():
                     pr_bool = self[choice][0]()
                 else:
+                    # ToDo add *kwarg to call fucntion with multiple parameters
                     pr_bool = self[choice][0](self[choice][1])
                 if self[choice][4] or pr_bool:
                     self.print_menu()
