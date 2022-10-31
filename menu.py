@@ -131,6 +131,12 @@ class Menu(dict):
                 if print_statement:
                     print(print_statement)
                 print(f"\n__{self.name}__: 'M' to print menu")
+                
+                # choices are not currently case sensitive 
+                # ToDo: provide options for case sensitive
+                # ToDo: if not case sensitive provide error if 
+                # menu choice is duplicated
+                # ToDo: Provide option for multiple types of call
                 choice = input(self.prompt).upper().strip()
                 # menu_choice[0] is a function call,
                 # menu_choice[1] holds the function parameters
