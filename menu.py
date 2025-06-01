@@ -14,142 +14,220 @@ functions can have parameters
 """
 
 
-class Menu(dict):
-    """
-    Menu is a dict
-    """
+# menu.py
 
-    def __init__(self, name=None, header=None, body=None, footer=None, prompt="Please select a menu item: "):
-        super().__init__()
+from typing import Callable, Dict, List, Optional
+from collections import OrderedDict
+
+
+class EscapeCommand:
+    def __init__(self, name: str, handler: Callable[[List[str]], None], description: str):
         self.name = name
-        self.border = "- " * 30
-        self.header = header
-        self.body = body
-        self.footer = footer
+        self.handler = handler
+        self.description = description
+
+
+class EscapeManager:
+    """
+    Central registry for escape commands. Uses a configurable prefix (default "./").
+    """
+    def __init__(self, prefix: str = "./"):
+        self.prefix = prefix
+        self._commands: Dict[str, EscapeCommand] = {}
+
+    def register(self, cmd: EscapeCommand):
+        self._commands[cmd.name] = cmd
+
+    def dispatch(self, raw_input: str) -> bool:
+        parts = raw_input.split(maxsplit=1)
+        cmd_name = parts[0]
+        if cmd_name in self._commands:
+            args = parts[1].split() if len(parts) > 1 else []
+            self._commands[cmd_name].handler(args)
+            return True
+        print(f"❓ Unrecognized command '{cmd_name}'. Type '{self.prefix}help' for valid commands.")
+        return True
+
+
+class MenuItem:
+    def __init__(
+        self,
+        key: str,
+        description: str,
+        handler: Callable[[], None],
+        group: Optional[str] = None,
+        enabled: bool = True
+    ):
+        self.key = key.upper()
+        self.description = description
+        self.handler = handler
+        self.group = group
+        self.enabled = enabled
+
+
+class Menu:
+    """
+    Generic CLI menu with customizable escape‐prefix. 
+    """
+    class ExitMenu(Exception):
+        pass
+
+    def __init__(
+        self,
+        title: str,
+        prompt: str = "Select an option:",
+        parent: Optional["Menu"] = None,
+        escape_prefix: str = "./"
+    ):
+        self.title = title
         self.prompt = prompt
+        self.parent = parent
+        self.items: "OrderedDict[str, MenuItem]" = OrderedDict()
+        self.escape_mgr = EscapeManager(prefix=escape_prefix)
+        self._register_default_escape_commands()
 
-    @staticmethod
-    def quit_program() -> None:
-        """
-        used to quit the program,
-        (selecting q in menu calls this and breaks the menu loop)
-        prints "< Exiting Menu"
-        :return: None
-        """
-        print("< Exiting Menu")
+    def _register_default_escape_commands(self):
+        p = self.escape_mgr.prefix
+        self.escape_mgr.register(
+            EscapeCommand(f"{p}help", self._cmd_help, "Show list of escape commands.")
+        )
+        self.escape_mgr.register(
+            EscapeCommand(f"{p}exit", self._cmd_exit, "Exit current menu (return to parent).")
+        )
+        self.escape_mgr.register(
+            EscapeCommand(f"{p}quit", self._cmd_exit, "Alias for exit.")
+        )
+        self.escape_mgr.register(
+            EscapeCommand(f"{p}disable", self._cmd_disable, "Disable a menu item: '{p}disable <KEY>'.")
+        )
+        self.escape_mgr.register(
+            EscapeCommand(f"{p}enable", self._cmd_enable, "Enable a menu item: '{p}enable <KEY>'.")
+        )
+        self.escape_mgr.register(
+            EscapeCommand(f"{p}list", self._cmd_list, "List menu items and status.")
+        )
 
-    # this isn't really NEEDED? < (I never call this function,
-    # but it can help another coder understand/use the menu)
-    # this CAN be used in loops, and to add items to menu. Needed?
-    @staticmethod
-    def create_menu_tuple(
-        function, parameters, menu_text, display_item
-    ) -> tuple:
-        """
-        this is not currently being used int the program.
-        used to provide a structured way to create new menus that reminds coders how they're built.
-        :param function: name of the function to be called
-        :param parameters: parameters for any function what needs them.
-        :param menu_text: The text the user sees when printing the menu
-        :param display_item: Bool - choose whether the item is printed or not
-                allows additional user controls without needing a bloated menu
-        :return: a tuple containing all of the above info
-        """
-        return function, parameters, menu_text, display_item
+    def register_escape(self, name: str, handler: Callable[[List[str]], None], description: str):
+        self.escape_mgr.register(EscapeCommand(name, handler, description))
 
-    # same as above
-    @staticmethod
-    def new_menu_item(menu_key: str, menu_tuple: tuple) -> dict:
-        """
-        adds a new menu item with the correct parameters to a menu.
-        can call create_menu_tuple, or just put a tuple directly into the menu_tuple parameter
-        :param menu_key: a string holding the text used to select a menu item
-        :param menu_tuple: a tuple containing all the information in a menu
-                (the tuple is better described in create_menu_tuple() function)
-        :return: a dictionary object with a single key, and corresponding menu tuple
-        """
+    def _cmd_help(self, args: List[str]):
+        print("\n=== Escape Commands ===")
+        for cmd in self.escape_mgr._commands.values():
+            print(f"  {cmd.name:<12} — {cmd.description}")
+        print()
 
-        # a dict containing a single key, with a tuple containing
-        # (function, parameters, "menu_text", display_item: bool, print_after: bool)
-        menu_item = {menu_key: menu_tuple}
-        return menu_item
+    def _cmd_exit(self, args: List[str]):
+        raise Menu.ExitMenu
 
-    @staticmethod
-    def print_strlist(str_list):
-        """
-        cheks if its a string or list
-        if its a list of strings prints 1 line at a time
-        :param str_list: list[str] or str
-        :return: None
-        """
-        if isinstance(str_list, str):
-            print(str_list)
-        elif isinstance(str_list, list):
-            for line in str_list:
-                print(line)
+    def _cmd_disable(self, args: List[str]):
+        if not args:
+            print(f"❗ Usage: {self.escape_mgr.prefix}disable <KEY>")
+            return
+        key = args[0].upper()
+        if key in self.items:
+            item = self.items[key]
+            if not item.enabled:
+                print(f"⚠️ '{key}' already disabled.")
+            else:
+                item.enabled = False
+                print(f"✅ Disabled '{key}'.")
+        else:
+            print(f"❗ No menu item '{key}'.")
 
-    def print_menu(self) -> None:
-        """
-        prints the menu_text part of the tuple in the provided menu
-                menu item format: {key: (function, parameters, "display text", bool(print item?)
-        :return: None
-        """
-        # border = "- " * 30
-        # print(f"{self.border}")
+    def _cmd_enable(self, args: List[str]):
+        if not args:
+            print(f"❗ Usage: {self.escape_mgr.prefix}enable <KEY>")
+            return
+        key = args[0].upper()
+        if key in self.items:
+            item = self.items[key]
+            if item.enabled:
+                print(f"⚠️ '{key}' already enabled.")
+            else:
+                item.enabled = True
+                print(f"✅ Enabled '{key}'.")
+        else:
+            print(f"❗ No menu item '{key}'.")
 
-        self.print_strlist(self.header)
-        self.print_strlist(self.body)
+    def _cmd_list(self, args: List[str]):
+        print("\n=== Menu Items ===")
+        current_group = None
+        for item in self.items.values():
+            if item.group != current_group:
+                current_group = item.group
+                if current_group:
+                    print(f"\n-- {current_group} --")
+            status = "(Disabled)" if not item.enabled else ""
+            print(f"  [{item.key}] {item.description} {status}")
+        print()
 
-        print("\nPlease select a menu key from below: ")
-        # print(self.border)
+    def add_item(
+        self,
+        key: str,
+        description: str,
+        handler: Callable[[], None],
+        group: Optional[str] = None,
+        enabled: bool = True
+    ):
+        item = MenuItem(key, description, handler, group=group, enabled=enabled)
+        self.items[item.key] = item
 
-        # value[3] is a boolean value called 'display_item' stating whether to print menu item,
-        # value[2] is the menu text the user will see printed
-        # key is the dictionary key the user uses to select the menu item.
-        for key, value in self.items():
-            if value[3]:
-                print(f"{key}: {value[2]}")
-        # print(self.border)
-
-        self.print_strlist(self.footer)
-
-    def run_menu(self, print_statement=None) -> False:
-        """
-        Takes user input to choose a menu object, than runs the correlated menu function
-        If an invalid entry is given, prints a warning to user, with reminders
-        of how to quit or print the menu
-        :return: BOOL value: False (once q is presses escapes menu,
-         tells program menu is not running)
-        """
-
-        #  sentinel, priming loop
-        choice = ''
-        self.print_menu()
-        # Q escapes menu and quits.
-        while choice.upper() != 'Q':
+    def add_submenu(self, key: str, description: str, submenu: "Menu", group: Optional[str] = None):
+        submenu.parent = self
+        def _enter_submenu():
             try:
-                if print_statement:
-                    print(print_statement)
-                print(f"\n__{self.name}__: 'M' to print menu")
-                choice = input(self.prompt).upper().strip()
-                # menu_choice[0] is a function call,
-                # menu_choice[1] holds the function parameters
-                if self[choice][1] == ():
-                    pr_bool = self[choice][0]()
-                else:
-                    # ToDo add *kwarg to call fucntion with multiple parameters
-                    pr_bool = self[choice][0](self[choice][1])
-                if self[choice][4] or pr_bool:
-                    self.print_menu()
+                submenu.run()
+            except Menu.ExitMenu:
+                return
+        self.add_item(key, description, _enter_submenu, group=group)
 
-            # invalid entry provides user with a reminder.
-            except LookupError:
-                print(
-                    '\nInvalid Entry. \n'
-                    '                 M to print menu\n'
-                    '                 Q to quit menu\n'
-                )
-        return False
+    def set_enabled(self, key: str, enabled: bool):
+        key = key.upper()
+        if key in self.items:
+            self.items[key].enabled = enabled
+
+    def _breadcrumb(self) -> str:
+        if self.parent:
+            return f"{self.parent._breadcrumb()} > {self.title}"
+        return self.title
+
+    def read_input(self, prompt: str) -> str:
+        raw = input(prompt).strip()
+        if raw.startswith(self.escape_mgr.prefix):
+            handled = self.escape_mgr.dispatch(raw)
+            if handled:
+                return self.read_input(prompt)
+        return raw
+
+    def _print_menu(self):
+        print("\n" + "=" * 50)
+        print(f"  {self._breadcrumb()}")
+        print("=" * 50)
+        current_group = None
+        for item in self.items.values():
+            if item.group != current_group:
+                current_group = item.group
+                if current_group:
+                    print(f"\n-- {current_group} --")
+            prefix = "[ ]" if not item.enabled else f"[{item.key}]"
+            print(f"  {prefix} {item.description}")
+        print("=" * 50)
+
+    def run(self):
+        while True:
+            try:
+                self._print_menu()
+                choice = self.read_input(f"{self.prompt} ").upper()
+                if choice in self.items:
+                    item = self.items[choice]
+                    if not item.enabled:
+                        print(f"❗ Option '{choice}' is disabled.")
+                        continue
+                    item.handler()
+                else:
+                    print(f"❗ Invalid choice: '{choice}'. Type '{self.escape_mgr.prefix}help' or select a valid key.")
+            except Menu.ExitMenu:
+                return
 
 
 if __name__ == '__main__':
